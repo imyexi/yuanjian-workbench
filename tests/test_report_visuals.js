@@ -145,6 +145,20 @@ async function main() {
   assert.match(full,/SAVED_POST_BODY/);
   assert.match(full,/CURRENT_CHANGED_POST/,'complete export distinguishes the latest project material from its older report evidence');
 
+  const legacyProject=fixture();
+  legacyProject.ai_reports=[{id:'legacy-insight-report',kind:'insights',status:'success',data_version:1,
+    created_at:'2026-08-20T09:00:00Z',finished_at:'2026-08-20T09:02:00Z',
+    scope:{processed:1,total:99,truncated:98,text_truncated:1,evidence_ids:['keywords:k1'],
+      counts:{keywords:{processed:1,total:99}},selection:'旧报告仅分析当时选中的关键词'},
+    report:{title:'旧版需求报告',summary:'旧报告结论',audiences:[],topics:[],cautions:[]}}];
+  const legacyView=harness(legacyProject),legacyHtml=legacyView.run('insightWorkspace()');
+  for(const detail of ['2026-08-20T09:02:00Z','关键词 1/99','部分样本，未覆盖全部资料',
+    '1 条原文已截断，分析仅使用保存的摘录','旧报告仅分析当时选中的关键词']) {
+    assert.ok(legacyHtml.includes(detail),'legacy report reading must retain its own coverage and generation metadata: '+detail);
+  }
+  assert.match(legacyHtml,/这份报告基于旧数据/,'legacy coverage must remain distinct from current project data');
+  assert.equal(legacyView.calls.length,0,'opening a legacy report never reruns its analysis');
+
   // Distribution percentages describe recorded samples, never people or market size.
   assert.equal(view.run('typeof reportDistribution'),'function');
   const emotion=view.run("reportDistribution([{name:'中性',count:148},{name:'焦虑',count:1},{name:'期待',count:1}],{style:'emotion',total:150,label:'样本情绪分布'})");

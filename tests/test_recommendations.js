@@ -4,13 +4,17 @@ const {harness,fixture}=require('./test_workflow.js');
 const {reportFixture}=require('./test_insight_modules.js');
 const clone=x=>JSON.parse(JSON.stringify(x));
 function product(id='B000000001',price=24.99){return {id,title:'Saved product '+id,asin:id,platform:'amazon',price,currency:'USD',rating:4.4,review_count:120,sales_raw:'父体月销量估算 300',sales_period:'2026-08',features:['可拆洗泵体'],source:'卖家精灵 MCP',source_url:'https://www.amazon.com/dp/'+id,image:'https://images.example.com/product.jpg',collected_at:'2026-09-12T10:00:00Z',query:'easy clean fountain',market_scope:'US'}}
-function record(status='success',reportId='report-a',id='rec-a'){return {id,report_id:reportId,source_fingerprint:'frozen-abc',status,phase:'ranking',message:'已完成',requests:2,request_limit:2,created_at:'2026-09-12T10:00:00Z',finished_at:status==='running'?null:'2026-09-12T10:01:00Z',
+function record(status='success',reportId='report-a',id='rec-a'){
+ const evidence=[{id:'reviews:r1',kind:'reviews',row_id:'r1',text:'SAVED raw: hard to clean <script>bad()</script>',translation:'保存时译文',source_url:'https://example.com/original-review',platform:'reddit',text_truncated:true}];
+ const summary=reportFixture(reportId).report.modules.summary.report;
+ return {id,report_id:reportId,source_fingerprint:'frozen-abc',report_snapshot:{schema_version:2,report:clone(summary)},status,phase:'ranking',message:'已完成',requests:2,request_limit:2,created_at:'2026-09-12T10:00:00Z',finished_at:status==='running'?null:'2026-09-12T10:01:00Z',
  queries:[{query:'replacement pump cleaning',direction:'易清洗饮水机',status:'failed',http:429,returned:0,error:'模拟服务额度限制'}],
  products:[product(),product('B000000002',31.5),product('B000000003',null)],
  result:{title:'先验证可拆洗款',direction:'可拆洗泵体的宠物饮水机',target:'多猫家庭',summary:'优先核验清洗体验和配件成本。',recommended_product_id:status==='no_match'?'':'B000000001',
  reasons:[{text:'便于清洗，但仍需试用验证。',product_ids:['B000000001'],evidence_ids:['reviews:r1']}],alternatives:[{product_id:'B000000002',reason:'配件另售'},{product_id:'B000000003',reason:'价格尚缺'}],checks:['核算清洗和换件成本'],no_match_reason:'暂无匹配商品'},
- evidence_snapshot:[{id:'reviews:r1',kind:'reviews',row_id:'r1',text:'SAVED raw: hard to clean <script>bad()</script>',translation:'保存时译文',source_url:'https://example.com/original-review',platform:'reddit',text_truncated:true}]} }
-function project(records=[]){const p=fixture();const r=reportFixture('report-a');r.status='success';r.finished_at='2026-09-12T09:59:00Z';r.data_version=p.data_version;p.ai_reports=[r];p.product_recommendations=records;p.products=[{...product(),price:9999,title:'CURRENT MUTATED PRODUCT',rating:1}];return p}
+ evidence_snapshot:evidence};
+}
+function project(records=[]){const p=fixture();const r=reportFixture('report-a'),source=records[0]||record();r.status='success';r.finished_at='2026-09-12T09:59:00Z';r.data_version=p.data_version;r.report.modules.summary.evidence_snapshot=clone(source.evidence_snapshot);p.ai_reports=[r];p.product_recommendations=records;p.products=[{...product(),price:9999,title:'CURRENT MUTATED PRODUCT',rating:1}];return p}
 function setup(p=project()){
  const h=harness(p),timers=new Map(),calls=[];let timerId=0,responder=async()=>{throw Error('Unexpected HTTP')};
  h.context.URL=URL;
@@ -42,17 +46,25 @@ async function main(){
  assert.match(md,/SAVED raw/);assert.match(md,/保存时译文/);assert.match(md,/replacement pump cleaning/);assert.match(md,/模拟服务额度限制/);assert.match(md,/HTTP：429/);
  assert.equal(pure.run('recommendationsUI.entries.size'),0,'pure renderers do not create task state');
  await pure.run('recommendationsOnNavigation()');assert.equal(pure.calls.length,0,'saved terminal result reopens without even a POST');
+ const staleCache=setup(project([record()]));staleCache.state.project.ai_reports[0].report.modules.summary.report.title='UPDATED SUMMARY';
+ assert.equal(staleCache.run('recommendationRecord(selectedInsightReport())')==null,true,'same-ID report changes invalidate the saved recommendation snapshot');
+ assert.match(staleCache.run('recommendationHtml(selectedInsightReport())'),/生成商品推荐/);
+ assert.doesNotMatch(staleCache.run('recommendationHtml(selectedInsightReport())'),/可拆洗泵体的宠物饮水机/);
+ const incomplete=setup();incomplete.state.project.ai_reports[0].report.modules.summary.status='failed';
+ const incompleteHtml=incomplete.run('recommendationHtml(selectedInsightReport())');
+ assert.doesNotMatch(incompleteHtml,/data-action="recommendation-start"/);assert.match(incompleteHtml,/请先完成选品建议模块/);
  const complete=pure.run('fullReportHtml()');assert.doesNotMatch(complete,/<button\b|data-action=|<script\b|<img\b/);
  assert.ok(complete.indexOf('data-recommendation-report=')<complete.indexOf('需求与选品建议</h2>'),'recommendation leads the complete report');
  assert.doesNotMatch(pure.run('reportWorkspace()'),/watch-product-direction|watch-query-products|data-page="products"/);
- const history=reportFixture('report-old');history.status='success';history.report.title='OLD SELECTED DEMAND';pure.state.project.ai_reports.unshift(history);pure.state.project.product_recommendations.unshift({...record('success','report-old','rec-old'),result:{...record().result,title:'OLD SELECTED RECOMMENDATION'}});
+ const history=reportFixture('report-old'),historyRecord={...record('success','report-old','rec-old'),result:{...record().result,title:'OLD SELECTED RECOMMENDATION'}};history.status='success';history.report.title='OLD SELECTED DEMAND';history.report.modules.summary.evidence_snapshot=clone(historyRecord.evidence_snapshot);pure.state.project.ai_reports.unshift(history);pure.state.project.product_recommendations.unshift(historyRecord);
  pure.run("workflow.reportChoices[state.project.id]='report-old'");
  assert.match(pure.run('reportWorkspace()'),/OLD SELECTED RECOMMENDATION/);
  assert.match(pure.run('fullReportHtml()'),/OLD SELECTED RECOMMENDATION/);
  assert.equal(pure.run('recommendationReport().id'),'report-old');
 
  const first=setup(),get=deferred();first.respond(async(url,body)=>body?record('running'):get.promise);
- const opening=first.run('recommendationsOnNavigation()');await first.run('recommendationsOnNavigation()');assert.equal(first.calls.length,1);
+ assert.match(first.run('recommendationHtml(selectedInsightReport())'),/data-action="recommendation-start"/);
+ const opening=first.run("recommendationAction('recommendation-start',{dataset:{report:'report-a'}})");await first.run('recommendationsOnNavigation()');assert.equal(first.calls.length,1);
  get.resolve(null);await opening;assert.equal(first.posts().length,1);assert.deepEqual(first.posts()[0].body,{report_id:'report-a',retry:false});
  first.state.project.data_version=100;const doneProject=clone(first.state.project);doneProject.revision++;doneProject.product_recommendations=[record()];
  first.respond(async url=>url.includes('/recommendations?')?record():clone(doneProject));
@@ -105,8 +117,7 @@ async function main(){
  assert.match(index,/<script src="\/recommendations.js"><\/script>/);
  const nav=setup();nav.context.ROUTE_LABELS={report:'报告与选品',research:'关键词洞察'};let count=0;nav.context.recommendationsOnNavigation=()=>{count++};nav.context.window={scrollTo(){}};
  for(const prefix of ['function routePage(', 'function goto(']){const line=index.split('\n').find(x=>x.startsWith(prefix));if(line)vm.runInContext(line,nav.context)}
- nav.run("goto('report')");assert.equal(count,1,'real goto invokes the navigation hook');
- nav.run('reportWorkspace()');assert.equal(count,1,'rendering the page does not invoke the hook again');
+ nav.run("goto('report')");nav.run('reportWorkspace()');assert.equal(count,0,'navigation and rendering do not start a recommendation');
  const ai=setup();let attemptedDuringAI=0;ai.context.goto=page=>{ai.state.page=page;ai.run('recommendationsOnNavigation()')};
  ai.respond(async(url,body)=>{if(url.endsWith('/ai'))return {id:'ai-job',project_id:ai.state.project.id,status:'running'};if(url.startsWith('/api/ai/jobs/'))return {id:'ai-job',project_id:ai.state.project.id,status:'running'};if(body&&url.endsWith('/recommendations'))attemptedDuringAI++;if(url==='/api/projects/project-a')return clone(ai.state.project);throw Error('Unexpected '+url)});
  await ai.run("startAI('insights')");assert.equal(attemptedDuringAI,0,'starting a new analysis does not auto-recommend the previous report during goto');
@@ -119,11 +130,11 @@ async function main(){
  loads.respond(url=>url.endsWith('project-a')?aLoad.promise:bLoad.promise);
  const loadA=loads.run("openProject('project-a')"),loadB=loads.run("openProject('project-b')");
  bLoad.resolve({...project(),id:'project-b'});await loadB;aLoad.resolve(project());await loadA;
- assert.equal(loads.state.project.id,'project-b');assert.deepEqual(started,['project-b'],'late project A never becomes current or starts a recommendation');
+ assert.equal(loads.state.project.id,'project-b');assert.deepEqual(started,[],'opening a project never starts a recommendation');
  const initList=deferred();loads.respond(url=>url==='/api/projects'?initList.promise:Promise.resolve({...project(),id:'project-c'}));
  vm.runInContext(index.split('\n').find(x=>x.startsWith('async function init(')),loads.context);
  const initializing=loads.run('init()');await loads.run("openProject('project-c')");initList.resolve([]);await initializing;
- assert.equal(loads.state.project.id,'project-c');assert.deepEqual(started,['project-b','project-c']);
+ assert.equal(loads.state.project.id,'project-c');assert.deepEqual(started,[]);
  const waitingAI=setup();waitingAI.run("workflow.aiJob={id:'busy-ai',project_id:'project-a',status:'running'}");waitingAI.respond(async()=>({running:false,ai_running:true}));
  await waitingAI.run('recommendationsOnNavigation()');const waitingProject=clone(waitingAI.state.project);waitingAI.state.project={...project(),id:'project-b'};await waitingAI.tick();
  waitingAI.state.project=waitingProject;await waitingAI.run('recommendationsOnNavigation()');assert.equal(waitingAI.timers.size,1,'returning while own analysis is still running also reconnects waiting');

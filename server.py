@@ -571,7 +571,6 @@ def handler_for(store):
     recommendations = RecommendationJobs(store, LOCK, uid, now, import_rows)
     recommendations.ai_busy = lambda: any(j['record']['status'] == 'running' for j in ai.jobs.values())
     ai.external_busy = recommendations.is_running
-    ai.on_complete = lambda project, report_id: None if project.get('demo') else recommendations.ensure(project, report_id)
     history_running = set()
     identity = server_identity(store)
     class Handler(BaseHTTPRequestHandler):
