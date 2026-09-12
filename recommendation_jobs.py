@@ -155,10 +155,11 @@ def validate_products(products, project, queries):
     existing = {p['id'] for p in project.get('products', [])}
     query_words = {q['query'] for q in queries}
     ids = set()
-    fields = set(TEXT_LIMITS) | {'features', 'candidate', 'price', 'rating', 'review_count'}
+    fields = set(TEXT_LIMITS) | {'features', 'candidate', 'watched', 'price', 'rating', 'review_count'}
     for row in products:
-        if not isinstance(row, dict) or set(row) != fields:
+        if not isinstance(row, dict) or set(row) not in (fields, fields - {'watched'}):
             raise ValueError('推荐商品快照字段无效')
+        row = {**row, 'watched': row.get('watched', False)}
         for key, limit in TEXT_LIMITS.items():
             text(row[key], limit)
         if (not re.fullmatch(r'[A-Z0-9]{10}', row['id']) or row['id'] not in existing or row['id'] in ids or
@@ -172,7 +173,8 @@ def validate_products(products, project, queries):
             if value is not None and (type(value) not in (int, float) or not math.isfinite(value) or value < 0 or
                     key == 'rating' and value > 5 or key == 'review_count' and not float(value).is_integer()):
                 raise ValueError('推荐商品数值无效')
-        if type(row['candidate']) is not bool or not isinstance(row['features'], list) or len(row['features']) > 20:
+        if (type(row['candidate']) is not bool or type(row['watched']) is not bool or
+                not isinstance(row['features'], list) or len(row['features']) > 20):
             raise ValueError('推荐商品属性格式无效')
         for value in row['features']:
             text(value, 500)
@@ -180,7 +182,7 @@ def validate_products(products, project, queries):
             url = urlsplit(row['image'])
             if url.scheme not in ('http', 'https') or not url.hostname or url.username or url.password:
                 raise ValueError('推荐商品图片地址无效')
-    return copy.deepcopy(products)
+    return [dict(row, watched=row.get('watched', False)) for row in products]
 
 
 def normalize_records(original, project):

@@ -224,6 +224,8 @@ class RecommendationTests(unittest.TestCase):
         record, fresh = self.finish(jobs, p, started)
         renamed = copy.deepcopy(fresh); renamed['id'] = 'f' * 16
         self.assertEqual(rec.normalize_records([record], renamed)[0], record)
+        legacy = copy.deepcopy(record); legacy['products'][0].pop('watched')
+        self.assertFalse(rec.normalize_records([legacy], fresh)[0]['products'][0]['watched'])
         for mutate in (
             lambda r:r.update(source_fingerprint='0'*64),
             lambda r:r['evidence_snapshot'][0].update(text='modified original'),

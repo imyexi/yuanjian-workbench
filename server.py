@@ -22,6 +22,7 @@ from urllib.request import build_opener, ProxyHandler
 from urllib.error import HTTPError
 import sources
 import sellersprite
+from business_flow import normalize_workspace
 import device_setup
 from collection_jobs import CollectionJobs
 from ai_jobs import AIJobs, normalize_ai_report
@@ -29,9 +30,9 @@ from recommendation_jobs import RecommendationJobs, normalize_records
 
 ROOT = Path(__file__).resolve().parent
 BUILD_ID = hashlib.sha256(b''.join((ROOT / name).read_bytes() for name in (
-    'server.py', 'sources.py', 'sellersprite.py', 'device_setup.py',
+    'business_flow.py', 'server.py', 'sources.py', 'sellersprite.py', 'device_setup.py',
     'credential_store.py', 'collection_jobs.py', 'keyword_expansion.py', 'ai_jobs.py', 'ai_modules.py', 'codex_runner.py', 'recommendation_jobs.py',
-    'prompts/sanjin.json'))).hexdigest()
+    'prompts/sanjin.json', 'skills/consumer-motivation-insight/analysis.md'))).hexdigest()
 LOCK = threading.RLock()
 KINDS = ('keywords', 'products', 'posts', 'reviews')
 
@@ -121,7 +122,8 @@ def normalize(kind, row, provenance='import'):
                     sales_raw=string(row.get('sales_raw'), 250), sales_period=string(row.get('sales_period'), 100) or '周期未知',
                     sales_kind=string(row.get('sales_kind'), 100) or '未注明',
                     features=[string(f, 500) for f in features[:20]], image=clean_url(row.get('image')),
-                    brand=string(row.get('brand'), 100), candidate=boolean(row.get('candidate', False)))
+                    brand=string(row.get('brand'), 100), candidate=boolean(row.get('candidate', False)),
+                    watched=boolean(row.get('watched', False)))
     elif kind == 'posts':
         if not row.get('id') or not row.get('title') or row.get('platform') not in sources.LABELS:
             raise ValueError('内容必须包含 id、title 和有效 platform')
@@ -147,7 +149,7 @@ def new_project(name, keyword):
             'keyword': string(keyword, 300), 'market': '美国', 'platform': 'Amazon', 'language': '英文',
             'created_at': now(), 'updated_at': now(), 'revision': 0, 'data_version': 0,
             'keywords': [], 'products': [], 'posts': [], 'reviews': [], 'analyses': [], 'ai_reports': [],
-            'watch_history': [], 'runs': [], 'demo': False}
+            'watch_history': [], 'runs': [], 'demo': False, 'decision_workspace': normalize_workspace({})}
 
 
 def demo_project():
@@ -256,6 +258,7 @@ class Store:
         project.setdefault('posts', [])
         project.setdefault('ai_reports', [])
         project.setdefault('watch_history', [])
+        project.setdefault('decision_workspace', normalize_workspace({}))
         return project
 
     def save(self, p, expected=None):
@@ -561,6 +564,7 @@ def restore_project(original):
         elif run.get('mode') == 'seller':
             p['runs'][-1].update(mode='seller', query=string(run.get('query'), 300),
                 original_query=string(run.get('original_query'), 300), tool=string(run.get('tool'), 100))
+    p['decision_workspace'] = normalize_workspace(original.get('decision_workspace', {}))
     p['created_at'] = string(original.get('created_at'), 100) or p['created_at']
     return p
 
@@ -595,7 +599,7 @@ def handler_for(store):
                     return self.respond(200, identity)
                 if path == '/':
                     return self.respond(200, (ROOT / 'web/index.html').read_bytes(), 'text/html; charset=utf-8')
-                if path in ('/usage-flow.svg', '/collection.js', '/research.js', '/workflow.js', '/workflow.css', '/watch.js', '/keyword-controls.js', '/insight-report.css', '/report-visuals.js', '/recommendations.js'):
+                if path in ('/business.js', '/usage-flow.svg', '/collection.js', '/research.js', '/workflow.js', '/workflow.css', '/watch.js', '/keyword-controls.js', '/insight-report.css', '/report-visuals.js', '/recommendations.js'):
                     return self.respond(200, (ROOT / 'web' / path[1:]).read_bytes(),
                         'image/svg+xml' if path.endswith('.svg') else 'text/css; charset=utf-8' if path.endswith('.css') else 'text/javascript; charset=utf-8')
                 if path == '/api/ai':
@@ -789,14 +793,16 @@ def handler_for(store):
                         return self.respond(202, jobs.start(p, body))
                     if action == 'toggle':
                         kind = body.get('kind')
-                        field = 'candidate' if kind == 'products' else 'favorite' if kind == 'keywords' else None
+                        field = body.get('field', 'candidate') if kind == 'products' else 'favorite' if kind == 'keywords' else None
+                        if kind == 'products' and field not in ('candidate', 'watched'):
+                            raise ValueError('不支持的商品标记')
                         if not field:
                             raise ValueError('不支持的操作')
                         record = next((r for r in p[kind] if r['id'] == body.get('id')), None)
                         if not record:
                             raise ValueError('记录不存在')
-                        record[field] = not record[field]
-                        if kind == 'products':
+                        record[field] = not record.get(field, False)
+                        if kind == 'products' and field == 'candidate':
                             p['data_version'] += 1
                     elif action == 'import':
                         rows = body.get('rows')
@@ -807,6 +813,8 @@ def handler_for(store):
                         if not p['reviews'] and not any(r['candidate'] for r in p['products']):
                             raise ValueError('请先导入评论或添加候选商品')
                         p['analyses'].append(analyze(p))
+                    elif action == 'decision-workspace':
+                        p['decision_workspace'] = normalize_workspace(body.get('workspace'))
                     elif action == 'rename':
                         p['name'] = string(body.get('name'), 120) or p['name']
                     else:

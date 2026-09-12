@@ -8,9 +8,9 @@ function harness(){
  const node=selector=>{if(!nodes.has(selector))nodes.set(selector,{innerHTML:'',textContent:'',scrollIntoView(){this.scrolled=true}});return nodes.get(selector)};
  const context=vm.createContext({document:{querySelector:node,addEventListener(){}},window:{scrollTo(){}},location:{hash:''},
   setTimeout(){return 1},clearTimeout(){},requestAnimationFrame(){},
-  keywordWorkspace(){return ''},insightWorkspace(){return ''},reportWorkspace(){return ''},guide(){return ''},research(){return ''},jobView(){return ''},
+  audienceLensWorkspace(){return ''},skillWorkspace(){return ''},inputManifestWorkspace(){return ''},evidenceLedgerWorkspace(){return ''},businessAction:async()=>false,businessWorkspace(){return ''},audienceWorkspace(){return ''},keywordWorkspace(){return ''},insightWorkspace(){return ''},reportWorkspace(){return ''},guide(){return ''},research(){return ''},jobView(){return ''},
   async fetch(path,options){requests.push({path,options});assert.ok(responses.length,'Only an explicit refresh may request history');return responses.shift()(path,options)}});
- vm.runInContext(script,context);vm.runInContext(inline,context);
+ vm.runInContext(fs.readFileSync('web/workflow.js','utf8').split('\n').find(x=>x.startsWith('const AUDIENCE_STEPS=')),context);vm.runInContext(script,context);vm.runInContext(inline,context);
  return {context,nodes,requests,responses,run:code=>vm.runInContext(code,context),
   set(p){context.inputProject=p;vm.runInContext("state.project=inputProject;state.page='products';state.query='';state.filter='all';state.sort='default'",context)}};
 }
@@ -34,7 +34,17 @@ function renderHistory(h,record){h.context.inputHistory=record;return h.run('his
 async function main(){
  const h=harness();h.set(project());
  assert.match(html,/<script src="\/watch.js"><\/script>/);
- assert.equal(h.run("NAV.some(x=>x[0]==='products'&&x[2]==='电商盯盘')"),true);
+ assert.equal(h.run("NAV.some(x=>x[0]==='products')"),true);
+ assert.equal(h.run("NAV.find(x=>x[0]==='products')[3]"),'资料与工具');
+ const watched={...product('B000000002','仅关注商品'),watched:true,candidate:false};
+ const candidate={...product('B000000003','仅候选商品'),candidate:true};
+ h.set(project('project-a',[watched,candidate]));
+ h.run("state.filter='watched'");
+ assert.match(h.run('products()'),/data-action="watched"/);
+ assert.doesNotMatch(h.run('products()').split('<div class="compare-dock">')[0],/data-id="B000000003"/);
+ h.run("state.filter='candidate'");
+ assert.doesNotMatch(h.run('products()').split('<div class="compare-dock">')[0],/data-id="B000000002"/);
+ h.set(project());
  let view=h.run('marketWatch()');
  assert.match(view,/查看竞品变化/);assert.match(view,/未开启定时监控/);assert.equal(h.requests.length,0);
  await h.run("runAction('product-history',{dataset:{id:'B000000001'}})");
