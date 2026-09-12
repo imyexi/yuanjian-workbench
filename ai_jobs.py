@@ -67,10 +67,10 @@ def system_prompt(kind):
     if kind == 'translate':
         return GUARD + '\n只把每条 evidence.text 忠实翻译为简体中文，保留品牌、数值与语气，不增添结论；原文已是中文则保持原意。每个输入 id 必须返回且只返回一次。'
     if kind == 'keywords':
-        return GUARD + prompts['_CLEAN_SYSTEM'] + '\n' + prompts['_INTENT_SYSTEM'] + '''
+        return GUARD + ai_modules.clean_method_prompt(prompts['_CLEAN_SYSTEM']) + '\n' + prompts['_INTENT_SYSTEM'] + '''
 本产品适配：售后故障、清洗、漏水、维修等使用问题也是需求证据，必须保留，不按旧提示词中的售后排除规则移除；英文词不因字母组成被标记无效。
 逐条返回全部输入关键词的 items，id 原样保留；同词跨平台是不同来源，逐条保留，不合并丢编号。
-只给结构化分类，不输出旧版 Markdown 表。统计数由程序从 items 计算。findings 和 next_steps 各最多五条，都用 evidence_ids 引用输入编号。
+items 仅返回供汇总图表使用的基础分类，不为每个词生成内容建议，也不把建议写入 reason 等分类字段；不输出旧版 Markdown 表。统计数由程序从 items 计算。findings 和 next_steps 各最多五条，都用 evidence_ids 引用输入编号。
 主题应具体且少量。无效词也必须在 items 中标 valid=false 并填写具体 reason，不从项目中删除。'''
     return GUARD + prompts['_AUDIENCE_SYSTEM'] + '\n' + prompts['_INSIGHT_SYSTEM'] + '\n' + prompts['_RUBRIC'] + '''
 合并输出当前 JSON schema：core_opportunity、audiences、topics、cautions 都必须带 evidence_ids。
@@ -496,6 +496,8 @@ class AIJobs:
         self.store, self.lock, self.uid, self.now = store, lock, uid, now
         self.runner = runner or codex_runner.run
         self.jobs = {}
+        self.on_complete = None
+        self.external_busy = lambda: False
 
     def status(self):
         return codex_runner.status()
@@ -552,7 +554,7 @@ class AIJobs:
         if self.runner is codex_runner.run and not codex_runner.executable():
             raise ValueError('未找到可用的 Codex 程序，请检查 codex.local.json 或 FIELDWORK_CODEX_PATH 的路径配置')
         with self.lock:
-            if any(j['record']['status'] == 'running' for j in self.jobs.values()):
+            if self.external_busy() or any(j['record']['status'] == 'running' for j in self.jobs.values()):
                 raise ValueError('本机已有 AI 任务正在运行，请等待完成或取消')
             record = {k: copy.deepcopy(prepared[k]) for k in ('kind', 'target', 'scope', 'evidence_snapshot')}
             record.update(id=self.uid(), status='running', data_version=project['data_version'],
@@ -571,7 +573,7 @@ class AIJobs:
             raise ValueError('模块洞察使用当前项目资料，请按模块选择分析')
         selected = module_keys(body.get('modules'))
         with self.lock:
-            if any(j['record']['status'] == 'running' for j in self.jobs.values()):
+            if self.external_busy() or any(j['record']['status'] == 'running' for j in self.jobs.values()):
                 raise ValueError('本机已有 AI 任务正在运行，请等待完成或取消')
             retained = {}
             base_id = body.get('base_report_id')
@@ -719,9 +721,29 @@ class AIJobs:
                 raise ValueError('任务记录缺失，未覆盖项目')
             self.store.save(project, project['revision'])
 
+    def complete(self, job):
+        record = job['record']
+        if not self.on_complete or record['kind'] != 'insights' or record['status'] not in ('success', 'partial'):
+            return
+        if record.get('schema_version') == 2 and record['report']['modules'].get('summary', {}).get('status') != 'success':
+            return
+        try:
+            with self.lock:
+                self.on_complete(self.store.load(job['project_id']), record['id'])
+        except Exception:
+            # The analysis remains valid if the optional next stage cannot start.
+            with self.lock:
+                record['message'] = '洞察已保存；自动选品尚未启动，进入报告页可继续。'
+                try:
+                    self.persist(job)
+                except Exception:
+                    pass
+
     def work(self, job):
         if job['record'].get('schema_version') == 2:
-            return self.work_modules(job)
+            self.work_modules(job)
+            self.complete(job)
+            return
         record = job['record']
         try:
             payload = {'product': job['product'], 'scope': record['scope'], 'evidence': record['evidence_snapshot']}
@@ -748,3 +770,4 @@ class AIJobs:
                 self.persist(job)
             except Exception:
                 record['message'] = 'AI 结果未能保存；项目可能正在同步，请重新打开后再试'
+        self.complete(job)

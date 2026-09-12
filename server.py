@@ -26,11 +26,12 @@ from business_flow import normalize_workspace
 import device_setup
 from collection_jobs import CollectionJobs
 from ai_jobs import AIJobs, normalize_ai_report
+from recommendation_jobs import RecommendationJobs, normalize_records
 
 ROOT = Path(__file__).resolve().parent
 BUILD_ID = hashlib.sha256(b''.join((ROOT / name).read_bytes() for name in (
     'business_flow.py', 'server.py', 'sources.py', 'sellersprite.py', 'device_setup.py',
-    'credential_store.py', 'collection_jobs.py', 'keyword_expansion.py', 'ai_jobs.py', 'ai_modules.py', 'codex_runner.py',
+    'credential_store.py', 'collection_jobs.py', 'keyword_expansion.py', 'ai_jobs.py', 'ai_modules.py', 'codex_runner.py', 'recommendation_jobs.py',
     'prompts/sanjin.json', 'skills/consumer-motivation-insight/analysis.md'))).hexdigest()
 LOCK = threading.RLock()
 KINDS = ('keywords', 'products', 'posts', 'reviews')
@@ -515,6 +516,8 @@ def restore_project(original):
         raise ValueError('数据版本无效')
     p['data_version'] = version
     p['ai_reports'] = [normalize_ai_report(r, p) for r in original.get('ai_reports', [])[-100:]]
+    if 'product_recommendations' in original:
+        p['product_recommendations'] = normalize_records(original['product_recommendations'], p)
     p['watch_history'] = sellersprite.restore_watch_history(original.get('watch_history', []), p['products'])
     review_ids = {r['id'] for r in p['reviews']}
     product_ids = {r['id'] for r in p['products']}
@@ -569,6 +572,9 @@ def restore_project(original):
 def handler_for(store):
     jobs = CollectionJobs(store, LOCK, import_rows, uid, now)
     ai = AIJobs(store, LOCK, uid, now)
+    recommendations = RecommendationJobs(store, LOCK, uid, now, import_rows)
+    recommendations.ai_busy = lambda: any(j['record']['status'] == 'running' for j in ai.jobs.values())
+    ai.external_busy = recommendations.is_running
     history_running = set()
     identity = server_identity(store)
     class Handler(BaseHTTPRequestHandler):
@@ -593,7 +599,7 @@ def handler_for(store):
                     return self.respond(200, identity)
                 if path == '/':
                     return self.respond(200, (ROOT / 'web/index.html').read_bytes(), 'text/html; charset=utf-8')
-                if path in ('/business.js', '/usage-flow.svg', '/collection.js', '/research.js', '/workflow.js', '/workflow.css', '/watch.js', '/keyword-controls.js', '/insight-report.css'):
+                if path in ('/business.js', '/usage-flow.svg', '/collection.js', '/research.js', '/workflow.js', '/workflow.css', '/watch.js', '/keyword-controls.js', '/insight-report.css', '/report-visuals.js', '/recommendations.js'):
                     return self.respond(200, (ROOT / 'web' / path[1:]).read_bytes(),
                         'image/svg+xml' if path.endswith('.svg') else 'text/css; charset=utf-8' if path.endswith('.css') else 'text/javascript; charset=utf-8')
                 if path == '/api/ai':
@@ -614,10 +620,20 @@ def handler_for(store):
                 if path == '/api/active-jobs':
                     with LOCK:
                         return self.respond(200, [jobs.get(id_) for id_, job in jobs.jobs.items() if job['run']['status'] == 'running'])
+                if path == '/api/recommendations/status':
+                    with LOCK:
+                        return self.respond(200, {'running': recommendations.is_running(), 'ai_running': recommendations.ai_busy()})
                 if path.startswith('/api/jobs/'):
                     return self.respond(200, jobs.get(path.split('/')[3]))
                 if path == '/api/projects':
                     return self.respond(200, store.listing())
+                if path.endswith('/recommendations'):
+                    parts = path.strip('/').split('/')
+                    report_id = parse_qs(urlparse(self.path).query).get('report', [''])[0]
+                    if len(parts) != 4 or parts[:2] != ['api', 'projects'] or not re.fullmatch(r'[a-f0-9]{16}', report_id):
+                        raise ValueError('报告查询地址无效')
+                    with LOCK:
+                        return self.respond(200, recommendations.get(store.load(parts[2]), report_id))
                 if path.startswith('/api/projects/'):
                     return self.respond(200, store.load(path.split('/')[3]))
                 return self.respond(404, {'error': '页面不存在'})
@@ -651,6 +667,17 @@ def handler_for(store):
                     return self.respond(200, jobs.cancel(path.split('/')[3]))
                 if path.startswith('/api/ai/jobs/') and path.endswith('/cancel'):
                     return self.respond(200, ai.cancel(path.split('/')[4]))
+                if path.endswith('/recommendations'):
+                    parts = path.strip('/').split('/')
+                    report_id, retry = body.get('report_id'), body.get('retry', False)
+                    if len(parts) != 4 or parts[:2] != ['api', 'projects'] or not isinstance(report_id, str) or not re.fullmatch(r'[a-f0-9]{16}', report_id) or not isinstance(retry, bool):
+                        raise ValueError('推荐任务参数无效')
+                    with LOCK:
+                        project = store.load(parts[2])
+                        cached = recommendations.get(project, report_id)
+                        if (not cached or retry) and (recommendations.ai_busy() or recommendations.is_running()):
+                            raise Conflict('已有分析或推荐正在运行，完成后会继续当前报告。')
+                        return self.respond(202, recommendations.ensure(project, report_id, retry=retry))
                 if path.endswith('/ai'):
                     parts = path.strip('/').split('/')
                     if len(parts) != 4 or parts[:2] != ['api', 'projects']:

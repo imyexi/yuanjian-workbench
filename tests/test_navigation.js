@@ -32,7 +32,7 @@ function harness(hash = '') {
   });
   const definitions = [line(fs.readFileSync(path.join(root,'web/workflow.js'),'utf8'),'const AUDIENCE_STEPS='),
     ...['const quick=', 'const PLATFORM_NAMES=', 'function syncQuickProject('].map(prefix=>line(research,prefix)),
-    ...['const NAV=', 'const ROUTE_LABELS=', 'const primaryPage=', 'function routePage(', 'const state=',
+    ...['const NAV=', 'const ROUTE_LABELS=', 'const primaryPage=', 'function routePage(', 'const state=', 'let toastTimer',
       'async function openProject(', 'function goto(', 'function render(', 'async function init(',
       "window.addEventListener('hashchange'"].map(prefix=>line(index,prefix))
   ].join('\n');

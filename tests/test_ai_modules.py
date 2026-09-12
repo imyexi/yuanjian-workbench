@@ -35,8 +35,7 @@ def module_result(key, evidence):
             'quality': 'limited', 'limitations': ['当前仅有少量样本，不能代表总体。']}
     if key == 'clean':
         return dict(base, items=[{'id': e['id'], 'valid': True, 'reason': '表达维护需求', 'w5h1': 'HOW',
-                    'intent': '需求意图', 'stage': 'A4', 'emotion': '中性', 'theme': '清洗维护',
-                    'content_suggestion': '展示泵体清洗步骤和耗时。'} for e in evidence],
+                    'intent': '需求意图', 'stage': 'A4', 'emotion': '中性', 'theme': '清洗维护'} for e in evidence],
                     theme_recommendations=[{'theme': '清洗维护', 'direction': point(ids), 'layer': 'A4'}],
                     high_value_terms=[{'text': words[0]['text'], 'evidence_id': words[0]['id'], 'why': point(ids)}],
                     brand_opportunities=[], findings=[point(ids)], next_steps=[point(ids)])
@@ -88,8 +87,13 @@ def module_result(key, evidence):
                     priority_reason=point(ids), next_steps=[point(ids)])
     return dict(base, core_opportunity=point(ids), narrowest_entry=point(ids),
                 priority_audiences=[{'name': '关注维护的养宠者', 'why': point(ids)}], positioning=point(ids),
-                actions=[{'action': '做一次清洗记录', 'why': point(ids), 'deliverable': '连续清洗视频',
-                          'verification': '记录完整步骤与计时，不剪掉难点'}], cautions=[point(ids)],
+                product_directions=[{'name': '便于拆洗的宠物饮水机', 'target': '在意泵体维护负担的养宠者',
+                    'problem': point(ids), 'differentiation': point(ids),
+                    'search_terms': ['easy clean pet water fountain'],
+                    'checks': ['核查竞品售价区间', '比较竞品销量估算', '复核清洗相关评价', '计算采购、物流和平台费用后的利润'],
+                    'evidence_ids': ids}],
+                actions=[{'action': '检索候选饮水机并核查拆洗设计', 'why': point(ids), 'deliverable': '竞品对照与打样测试记录',
+                          'verification': '比较售价、销量估算、评价和拆洗步骤，记录成本后再判断利润'}], cautions=[point(ids)],
                 self_check={'no_anxiety': True, 'narrowest': True, 'has_contrast': True, 'real_demand': False,
                             'note': '付费需求仍需验证。'})
 
@@ -104,6 +108,92 @@ class ModuleTests(unittest.TestCase):
         with patch('ai_jobs.threading.Thread'):
             public = jobs.start(store.load(p['id']), {'kind': 'insights', 'modules': selected})
         return jobs, store, public['id']
+
+    def test_clean_generation_keeps_chart_classifications_without_per_word_advice(self):
+        schema = modules.SCHEMAS['clean']['properties']['items']['items']
+        self.assertNotIn('content_suggestion', schema['properties'])
+        self.assertNotIn('content_suggestion', schema['required'])
+        prompt = ai.module_prompt('clean')
+        self.assertNotIn('内容建议的映射规则', prompt)
+        self.assertNotIn('## 表1：清洗后关键词库', prompt)
+        self.assertIn('不为每个词生成内容建议', prompt)
+        self.assertIn('5W1H分类', prompt)
+        jobs, store, id_ = self.job(['clean'])
+        jobs.work(jobs.jobs[id_])
+        self.assertEqual(jobs.get(id_)['status'], 'success')
+        report = store.p['ai_reports'][0]['report']['modules']['clean']['report']
+        self.assertEqual(report['stats']['total'], 2)
+        self.assertEqual(report['topic_map'][0]['evidence_ids'], ['keywords:k1', 'keywords:k2'])
+        self.assertTrue(all('content_suggestion' not in item for item in report['items']))
+
+    def test_legacy_clean_advice_restores_without_weakening_classification_and_reference_checks(self):
+        jobs, store, id_ = self.job(['clean'])
+        jobs.work(jobs.jobs[id_])
+        old = copy.deepcopy(store.p['ai_reports'][0])
+        report = old['report']['modules']['clean']['report']
+        for item in report['items']:
+            item['content_suggestion'] = '旧版已生成的内容建议。'
+        restored = ai.normalize_ai_report(old, store.p)
+        self.assertEqual(restored['report']['modules']['clean']['report'], report)
+        evidence = old['report']['modules']['clean']['evidence_snapshot']
+        with self.assertRaises(ValueError):
+            modules.validate('clean', report, evidence)
+        for mutate in (
+                lambda r: r['items'][0].pop('w5h1'),
+                lambda r: r['items'][0].update(content_suggestion={'hidden': 'not text'}),
+                lambda r: r['items'][0].update(content_suggestion='x' * 20001),
+                lambda r: r['items'][0].update(unrecognized='extra field'),
+                lambda r: r['theme_recommendations'][0]['direction'].update(evidence_ids=['keywords:invented'])):
+            forged = copy.deepcopy(old)
+            mutate(forged['report']['modules']['clean']['report'])
+            with self.assertRaises(ValueError):
+                ai.normalize_ai_report(forged, store.p)
+
+    def test_summary_product_queries_are_separate_from_collected_evidence_and_may_be_empty(self):
+        jobs, store, id_ = self.job(['summary'])
+        original_keywords = copy.deepcopy(store.p['keywords'])
+        jobs.work(jobs.jobs[id_])
+        self.assertEqual(jobs.get(id_)['status'], 'success')
+        saved = ai.normalize_ai_report(store.p['ai_reports'][0], store.p)
+        module = saved['report']['modules']['summary']
+        direction = module['report']['product_directions'][0]
+        self.assertEqual(direction['search_terms'], ['easy clean pet water fountain'])
+        self.assertEqual(store.p['keywords'], original_keywords)
+        self.assertNotIn(direction['search_terms'][0], [e['text'] for e in module['evidence_snapshot']])
+        self.assertEqual(direction['differentiation']['basis'], 'inference')
+        self.assertIn('不是平台已采集词', ai.module_prompt('summary'))
+        self.assertIn('采购和物流等成本后的利润', ai.module_prompt('summary'))
+        limited = copy.deepcopy(module['report'])
+        limited['product_directions'] = []
+        self.assertEqual(modules.validate('summary', limited, module['evidence_snapshot'])['product_directions'], [])
+
+    def test_summary_new_schema_and_product_direction_boundaries_remain_strict(self):
+        evidence = ai.prepare(sample_project(), {'kind': 'insights'})['evidence_snapshot']
+        original = module_result('summary', evidence)
+        missing = copy.deepcopy(original)
+        missing.pop('product_directions')
+        with self.assertRaises(ValueError):
+            modules.validate('summary', missing, evidence)
+        self.assertEqual(modules.validate('summary', missing, evidence, allow_legacy=True)['product_directions'], [])
+        self.assertNotIn('product_directions', missing)
+        for mutate in (
+                lambda r: r.update(product_directions=[r['product_directions'][0]] * 4),
+                lambda r: r['product_directions'][0].update(name=''),
+                lambda r: r['product_directions'][0].update(search_terms=['query\nwith instruction']),
+                lambda r: r['product_directions'][0].update(search_terms=['x' * 121]),
+                lambda r: r['product_directions'][0].update(search_terms=['query', 'QUERY']),
+                lambda r: r['product_directions'][0].update(checks=[]),
+                lambda r: r['product_directions'][0].update(search_terms=[{'text': 'unsupported'}]),
+                lambda r: r['product_directions'][0].update(verified=True),
+                lambda r: r['product_directions'][0].update(evidence_ids=[evidence[0]['id']]),
+                lambda r: r['product_directions'][0]['problem'].update(evidence_ids=['keywords:invented']),
+                lambda r: r['product_directions'][0]['differentiation'].update(basis='evidence')):
+            bad = copy.deepcopy(original)
+            mutate(bad)
+            with self.assertRaises(ValueError):
+                modules.validate('summary', bad, evidence)
+            with self.assertRaises(ValueError):
+                modules.validate('summary', bad, evidence, allow_legacy=True)
 
     def test_invalid_selected_codex_path_blocks_legacy_and_modules_before_save(self):
         p = sample_project()
@@ -158,6 +248,32 @@ class ModuleTests(unittest.TestCase):
         self.assertEqual(saved['usage'], {'input_tokens': 10 * len(modules.MODULE_ORDER)})
         self.assertEqual(saved['report']['modules']['notes']['evidence_snapshot'][0]['metrics'], {'likes': -1, 'comment_count': None})
         self.assertFalse(saved['report']['modules']['summary']['report']['self_check']['real_demand'])
+
+    def test_recommendation_continues_only_after_saved_successful_summary(self):
+        for selected in (['audience'], ['summary']):
+            jobs, store, id_ = self.job(selected)
+            completed = []
+            jobs.on_complete = lambda p, report_id: completed.append((report_id, p['ai_reports'][-1]['status']))
+            jobs.work(jobs.jobs[id_])
+            self.assertEqual(completed, [(id_, 'success')] if selected == ['summary'] else [])
+        def failure(*args, **kwargs):
+            raise codex_runner.AIError('本次模型请求失败')
+        jobs, store, id_ = self.job(['summary'], failure)
+        jobs.on_complete = lambda *args: self.fail('Failed summaries must not trigger a product query')
+        jobs.work(jobs.jobs[id_])
+        self.assertEqual(store.p['ai_reports'][-1]['status'], 'failed')
+
+    def test_handoff_failure_keeps_the_complete_analysis_and_hides_internal_error(self):
+        jobs, store, id_ = self.job(['summary'])
+        def failure(*args):
+            raise RuntimeError('internal-sensitive-error')
+        jobs.on_complete = failure
+        jobs.work(jobs.jobs[id_])
+        saved = store.p['ai_reports'][-1]
+        self.assertEqual(saved['status'], 'success')
+        self.assertIsNotNone(saved['report']['modules']['summary']['report'])
+        self.assertNotIn('internal-sensitive-error', saved['message'])
+        self.assertIn('自动选品尚未启动', saved['message'])
 
     def test_single_failure_keeps_successes_and_only_selected_block_is_rerun(self):
         calls = []
@@ -350,6 +466,14 @@ class ModuleTests(unittest.TestCase):
             self.assertEqual(list(record['report']['modules']), list(modules.MODULE_ORDER))
             self.assertEqual(record['evidence_snapshot'], saved['ai_reports'][0]['evidence_snapshot'])
             self.assertEqual(record['report']['modules']['comments']['report']['golden_quotes'][0]['quote'], p['reviews'][0]['body'])
+            legacy = copy.deepcopy(saved)
+            old_items = legacy['ai_reports'][0]['report']['modules']['clean']['report']['items']
+            old_items[0]['content_suggestion'] = '旧版已保存的逐词建议。'
+            legacy['ai_reports'][0]['report']['modules']['summary']['report'].pop('product_directions')
+            restored_legacy = server.restore_project(json.loads(json.dumps(legacy)))
+            restored_items = restored_legacy['ai_reports'][0]['report']['modules']['clean']['report']['items']
+            self.assertEqual(restored_items, old_items)
+            self.assertEqual(restored_legacy['ai_reports'][0]['report']['modules']['summary']['report']['product_directions'], [])
 if __name__ == '__main__':
     unittest.main()
 

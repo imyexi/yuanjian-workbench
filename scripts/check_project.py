@@ -11,7 +11,8 @@ from urllib.request import HTTPRedirectHandler, ProxyHandler, build_opener
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 STATIC_ASSETS = {**{name: 'text/javascript' for name in
-                   ('business.js', 'collection.js', 'research.js', 'workflow.js', 'watch.js', 'keyword-controls.js')},
+                   ('business.js', 'collection.js', 'research.js', 'workflow.js', 'watch.js', 'keyword-controls.js',
+                    'report-visuals.js', 'recommendations.js')},
                  'workflow.css': 'text/css', 'insight-report.css': 'text/css',
                  'usage-flow.svg': 'image/svg+xml'}
 
