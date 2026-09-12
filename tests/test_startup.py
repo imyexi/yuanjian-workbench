@@ -82,7 +82,8 @@ class StartupTests(unittest.TestCase):
         existing = app.LocalHTTPServer(('127.0.0.1', 0), app.handler_for(self.store))
         self.addCleanup(existing.server_close)
         self.assertTrue(existing.allow_reuse_address)
-        self.assertEqual(existing.socket.getsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR), 1)
+        # macOS returns the enabled socket flag as 4; POSIX only needs nonzero.
+        self.assertNotEqual(existing.socket.getsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR), 0)
 
     def test_old_build_is_not_reused(self):
         existing = self.run_server()

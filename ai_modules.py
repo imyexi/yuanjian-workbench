@@ -42,7 +42,7 @@ PROFILE = obj({
 MODULE_ORDER = ('clean', 'audience', 'intent', 'comments', 'notes', 'topics', 'summary')
 MODULES = {
     'clean': {'label': '关键词库', 'collections': ('keywords',), 'prompt': '_CLEAN_SYSTEM',
-              'output': '逐词分类、内容建议、主题选题地图、高价值词与品牌机会'},
+              'output': '样本分布、主题选题地图、高价值词与品牌机会'},
     'audience': {'label': '人群画像', 'collections': ('keywords', 'posts', 'reviews'), 'prompt': '_AUDIENCE_SYSTEM',
                  'output': '千机塔八层、日常场景、三层需求、购买决策与逐项优先级依据'},
     'intent': {'label': '搜索意图', 'collections': ('keywords',), 'prompt': '_INTENT_SYSTEM',
@@ -54,13 +54,13 @@ MODULES = {
     'topics': {'label': '营销选题', 'collections': ('keywords', 'posts', 'reviews'), 'prompt': '_TOPICS_SYSTEM',
                'output': '具体标题、人群、切入角度、开头、提纲、行动引导与证据词'},
     'summary': {'label': '综合判断', 'collections': ('keywords', 'posts', 'reviews'), 'prompt': '_INSIGHT_SYSTEM',
-                'output': '最窄切入点、先做什么、验证步骤及四项判断自检'},
+                'output': '待验证产品方向、差异化、竞品检索词与选品验证步骤'},
 }
 
 SCHEMAS = {
     'clean': obj({**BASE, 'items': arr(obj({'id': S, 'valid': {'type': 'boolean'}, 'reason': S,
         'w5h1': enum('WHAT', 'WHO', 'WHERE', 'WHEN', 'WHY', 'HOW'), 'intent': S, 'stage': STAGE,
-        'emotion': enum('正向', '负向', '中性'), 'theme': S, 'content_suggestion': S})),
+        'emotion': enum('正向', '负向', '中性'), 'theme': S})),
         'theme_recommendations': arr(obj({'theme': S, 'direction': POINT, 'layer': STAGE})),
         'high_value_terms': arr(obj({'text': S, 'evidence_id': S, 'why': POINT})),
         'brand_opportunities': arr(POINT), 'findings': arr(POINT), 'next_steps': arr(POINT)}),
@@ -82,6 +82,8 @@ SCHEMAS = {
         'words': arr(S), 'evidence_ids': IDS})), 'priority_reason': POINT, 'next_steps': arr(POINT)}),
     'summary': obj({**BASE, 'core_opportunity': POINT, 'narrowest_entry': POINT,
         'priority_audiences': arr(obj({'name': S, 'why': POINT})), 'positioning': POINT,
+        'product_directions': arr(obj({'name': S, 'target': S, 'problem': POINT, 'differentiation': POINT,
+                                      'search_terms': arr(S), 'checks': arr(S), 'evidence_ids': IDS})),
         'actions': arr(obj({'action': S, 'why': POINT, 'deliverable': S, 'verification': S})),
         'cautions': arr(POINT), 'self_check': obj({**{k: {'type': 'boolean'} for k in
                   ('no_anxiety', 'narrowest', 'has_contrast', 'real_demand')}, 'note': S})}),
@@ -93,7 +95,7 @@ COMMON = '''
 所有 basis 对象均须明确 evidence_ids；前两种必须有本模块证据，unknown 允许空引用且须写明如何验证。
 存在引用不代表结论已证实：用户画像、因果、心理与营销判断通常属于 inference；不得靠附一个编号冒充事实。
 无资料时明确待验证，不为了填满字段编造。缺少重要资料时 quality=limited，并在 limitations 集中说明。
-search_terms/high_value_terms 中的 text 必须是本模块关键词原文，evidence_id 必须对应同一词。
+人群画像 search_terms 与关键词库 high_value_terms 中的 text 必须是本模块关键词原文，evidence_id 必须对应同一词。
 quote 必须逐字摘自对应 evidence_id 的可见原文，保留语言，不用翻译伪装原话；不凭单条评论声称高频。
 评论 evidence.review_type 为 social 时是社交评论，为 product 时是商品评价；二者都不保证已经核实购买身份。
 只引用本模块输入编号。不能把其他模块的推断当新证据；已完成模块如作为上下文仅供衔接。
@@ -104,7 +106,8 @@ quote 必须逐字摘自对应 evidence_id 的可见原文，保留语言，不�
 
 ADAPTATIONS = {
     'clean': '''售后故障、清洗、漏水、维修都是需求证据，必须保留；英文词不因字母组成无效。
-逐条返回全部输入词，跨平台同词分别保留编号。有效词的 reason 说明分类依据，content_suggestion 给具体内容做法。
+逐条返回全部输入词的基础分类，跨平台同词分别保留编号。有效词的 reason 只说明分类依据。
+items 仅用于程序计算汇总图表与主题分布，不为每个词生成内容建议，也不把建议写入 reason 等分类字段。
 每个有效归一主题必须有一个 theme_recommendations，direction 说明内容角度，layer 给 A 层。
 高价值词只选有具体人群、场景或购买/需求线索的原词，说明理由；无品牌证据时 brand_opportunities 为空。
 统计由程序计算，不生成统计字段。不要用 A 层词数少推断平台内容供给不足，只能列为待检查方向。''',
@@ -137,15 +140,34 @@ gaps 只写本次样本没覆盖的角度，不宣称整个市场空白；选题
 每个给目标人群、A 层、角度反差、适合的形式、具体开头、3–5 个提纲要点、行动引导和为什么。
 words 只能选本模块输入的关键词原文，无关键词时为空，引用可来自内容/评论。
 提纲中的产品性能、实验结论和卖点若尚无证据，只能列为需要测试/展示的内容，不写成既定事实。''',
-    'summary': '''只做综合判断模块，详细画像和选题不在此重复堆砌。
-明确核心机会、最窄切入点、优先人群、定位及 3–5 个行动，每个行动写具体交付物和验证标准。
+    'summary': '''本模块服务跨境电商选品，回答「可以研究做什么产品、卖什么产品」，以产品方向和商业验证为主。
+详细画像不在此重复堆砌；不把写文章、拍视频、发内容作为默认核心机会或行动。
+明确核心机会、最窄切入点、优先购买人群、产品定位及 3–5 个选品验证行动，每个行动写具体交付物和验证标准。
+product_directions 给 1–3 个有依据的待验证产品方向；证据不足可为空，并在 limitations 说明应补什么资料，不能强凑。
+每个 name 是具体产品类型而非抽象主题；target 写适用人群和处境；problem 说明要解决什么问题；differentiation 给拟研究的结构、功能、材料或服务差异及需验证条件。
+所有方向均为选品假设，不代表已验证适销、有利润、已存在某款商品或具备所述性能。differentiation.basis 只能为 inference 或 unknown。
+每项 evidence_ids 必须包括 problem 和 differentiation 各自引用的本模块依据；缺少依据不推定需求已验证。
+product_directions.search_terms 是专门为供应商搜索构造的 1–5 个查询词，不是平台已采集词、消费者原话或已有搜索量证据；不要将它们混入原词统计。
+查询词用于卖家精灵商品搜索，美国 Amazon 优先用简明英文产品词；每词不超过 120 字符，不含换行。不编造品牌或 ASIN。
+checks 给 1–8 个具体核查项，覆盖售价区间、竞品销量估算、评价中的问题与需求、采购和物流等成本后的利润；未知指标只写待查，不编造数值。
+actions 应衔接卖家精灵检索候选商品、查看竞品信息、复核评论、比较成本和利润或打样验证。交付物应是候选清单、竞品对照、成本表或测试记录，而非泛内容创作。
 如果提供已完成模块上下文，指出它们的共同结论与矛盾，但证据仍限本模块原文。
 self_check 四项如实填 boolean；有 false 时 note 写未通过原因和需补验证，不强迫全部通过。''',
 }
 
 
+def clean_method_prompt(source):
+    """Keep the source method, excluding its obsolete per-keyword advice table."""
+    before, start, rest = source.partition('## 表1：清洗后关键词库（主表）')
+    _, end, after = rest.partition('## 表2：统计总览')
+    return before + end + after if start and end else source
+
+
 def system_prompt(key, prompts, guard):
-    return guard + prompts[MODULES[key]['prompt']] + COMMON + ADAPTATIONS[key]
+    source = prompts[MODULES[key]['prompt']]
+    if key == 'clean':
+        source = clean_method_prompt(source)
+    return guard + source + COMMON + ADAPTATIONS[key]
 
 
 def check_schema(value, schema):
@@ -181,12 +203,21 @@ def metrics(kind, row):
     return {key: row.get(key) if type(row.get(key)) in (int, float) and math.isfinite(row[key]) else None for key in keys}
 
 
-def validate(key, report, evidence):
+def validate(key, report, evidence, *, allow_legacy=False):
     report = copy.deepcopy(report)
     if not isinstance(report, dict):
         raise ValueError('AI 模块必须返回结构化报告')
     for derived in ('stats', 'topic_map', 'journey'):
         report.pop(derived, None)
+    if allow_legacy and key == 'summary':
+        report.setdefault('product_directions', [])
+    legacy_suggestions = {}
+    if allow_legacy and key == 'clean' and isinstance(report.get('items'), list):
+        for index, item in enumerate(report['items']):
+            if isinstance(item, dict) and 'content_suggestion' in item:
+                suggestion = item.pop('content_suggestion')
+                check_schema(suggestion, S)
+                legacy_suggestions[index] = suggestion
     check_schema(report, SCHEMAS[key])
     allowed = {e['id']: e for e in evidence}
     if any(e['kind'] not in MODULES[key]['collections'] for e in evidence):
@@ -231,8 +262,8 @@ def validate(key, report, evidence):
         valid = [i for i in report['items'] if i['valid']]
         themes = {}
         for item in valid:
-            if not item['theme'].strip() or not item['content_suggestion'].strip():
-                raise ValueError('有效关键词缺少主题或内容建议')
+            if not item['theme'].strip():
+                raise ValueError('有效关键词缺少主题')
             themes.setdefault(item['theme'], []).append(item['id'])
         recs = report['theme_recommendations']
         if len(recs) != len(themes) or {r['theme'] for r in recs} != set(themes):
@@ -298,9 +329,35 @@ def validate(key, report, evidence):
             if any(w not in words for w in topic['words']):
                 raise ValueError('选题词未对应本选题所引用的真实关键词')
     elif key == 'summary':
+        directions = report['product_directions']
+        if len(directions) > 3:
+            raise ValueError('单次最多提出三个待验证产品方向')
+        names = []
+        for direction in directions:
+            if any(not direction[field].strip() or len(direction[field]) > limit
+                   for field, limit in (('name', 120), ('target', 300))):
+                raise ValueError('选品方向缺少具体产品或目标人群，或文字超过上限')
+            names.append(direction['name'].strip().casefold())
+            for field, maximum, length in (('search_terms', 5, 120), ('checks', 8, 500)):
+                values = direction[field]
+                if (not 1 <= len(values) <= maximum or
+                        any(not value.strip() or len(value) > length or any(ord(c) < 32 or ord(c) == 127 for c in value)
+                            for value in values) or
+                        len({value.strip().casefold() for value in values}) != len(values)):
+                    raise ValueError('选品检索词或验证事项为空、重复、含控制字符或超过上限')
+            ids = set(direction['evidence_ids'])
+            point_ids = set(direction['problem']['evidence_ids'] + direction['differentiation']['evidence_ids'])
+            if not point_ids or not point_ids.issubset(ids):
+                raise ValueError('选品问题或差异化未对应本方向引用的依据')
+            if direction['differentiation']['basis'] == 'evidence':
+                raise ValueError('候选产品差异化须标为推断或待验证，不能冒充已验证性能')
+        if len(names) != len(set(names)):
+            raise ValueError('选品方向重复，请合并相同产品方向')
         if not report['actions'] and report['quality'] != 'limited':
             raise ValueError('综合判断缺少下一步行动')
         for action in report['actions']:
             if any(not action[field].strip() for field in ('action', 'deliverable', 'verification')):
                 raise ValueError('综合行动缺少具体交付物或验证标准')
+    for index, suggestion in legacy_suggestions.items():
+        report['items'][index]['content_suggestion'] = suggestion
     return report

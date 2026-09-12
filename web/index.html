@@ -23,6 +23,7 @@
 <script src="/collection.js"></script>
 <script src="/keyword-controls.js"></script>
 <script src="/research.js"></script>
+<script src="/report-visuals.js"></script>
 <script src="/workflow.js"></script>
 <script src="/watch.js"></script>
 <script>
@@ -36,7 +37,7 @@ const badge=(text,style='')=>`<span class="badge ${style}">${esc(text)}</span>`;
 const source=(r)=>badge(r.provenance==='demo'?'演示样本':r.provenance==='live'?'实时采集':'用户导入',r.provenance==='demo'?'amber':'');
 const external=(url,label='查看来源')=>/^https?:\/\//.test(url||'')?`<a class="source-link" href="${esc(url)}" target="_blank" rel="noopener noreferrer">${label} ↗</a>`:'<span class="caption">来源链接未提供</span>';
 const NAV=[['research','search','关键词洞察'],['products','box','电商盯盘'],['report','report','报告与选品']];
-const ROUTE_LABELS={research:'关键词洞察',keywords:'关键词洞察 · 关键词分析',insights:'关键词洞察 · 需求与营销',posts:'关键词洞察',products:'电商盯盘',report:'报告与选品',guide:'使用指南',overview:'项目总览'};
+const ROUTE_LABELS={research:'关键词洞察',keywords:'关键词洞察 · 关键词分析',insights:'关键词洞察 · 需求与选品',posts:'关键词洞察',products:'电商盯盘',report:'报告与选品',guide:'使用指南',overview:'项目总览'};
 const primaryPage=page=>['research','keywords','posts','insights'].includes(page)?'research':page;
 function routePage(page){if(page==='posts'){quick.tab='posts';return 'research'}return ROUTE_LABELS[page]?page:'research'}
 const state={project:null,projects:[],page:'overview',query:'',filter:'all',sort:'default',selected:new Set(),reportTab:'decision',marketingId:'',evidenceIds:null,busy:false,modal:null};
@@ -114,7 +115,7 @@ case'perform-rename':await mutate('rename',{name:document.querySelector('#rename
 case'run':showRun(state.project.runs.find(r=>r.id===el.dataset.id));break;
 }}
 function showRun(r){modal('导入任务详情',`<p>${date(r.created_at)} · 用户导入 · 不适用分页</p><div class="code">请求行数：${r.requested}\n成功新增：${r.imported}\n重复跳过：${r.duplicates}\n失败行数：${r.errors.length}\n停止原因：文件处理完成${r.errors.length?'，存在错误行':''}</div>${r.errors.length?'<h3 style="margin-top:22px">需要修正的行</h3>'+r.errors.slice(0,80).map(e=>`<p class="error-inline">第 ${e.row} 行：${esc(e.reason)}</p>`).join(''):''}`,button('关闭','close'))}
-document.addEventListener('click',async event=>{const el=event.target.closest('[data-action]');if(!el||el.disabled)return;try{await runAction(el.dataset.action,el)}catch(error){const inline=document.querySelector('#modal-error');if(inline)inline.textContent=error.message;else toast(error.message)}});
+document.addEventListener('click',async event=>{const el=event.target.closest('[data-action]');if(!el||el.disabled)return;if(el.tagName==='A')event.preventDefault();try{await runAction(el.dataset.action,el)}catch(error){const inline=document.querySelector('#modal-error');if(inline)inline.textContent=error.message;else toast(error.message)}});
 let searchUpdateTimer;
 function updateSearchInput(input){clearTimeout(searchUpdateTimer);if(state.composing)return;const value=input.value,pos=input.selectionStart;searchUpdateTimer=setTimeout(()=>{if(state.composing||!input.isConnected)return;state.query=value;render();const next=document.querySelector('#search-input');if(next){next.focus();next.setSelectionRange(pos,pos)}},150)}
 document.addEventListener('compositionstart',()=>{state.composing=true;clearTimeout(searchUpdateTimer)});

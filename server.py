@@ -589,7 +589,7 @@ def handler_for(store):
                     return self.respond(200, identity)
                 if path == '/':
                     return self.respond(200, (ROOT / 'web/index.html').read_bytes(), 'text/html; charset=utf-8')
-                if path in ('/usage-flow.svg', '/collection.js', '/research.js', '/workflow.js', '/workflow.css', '/watch.js', '/keyword-controls.js', '/insight-report.css'):
+                if path in ('/usage-flow.svg', '/collection.js', '/research.js', '/workflow.js', '/workflow.css', '/watch.js', '/keyword-controls.js', '/insight-report.css', '/report-visuals.js'):
                     return self.respond(200, (ROOT / 'web' / path[1:]).read_bytes(),
                         'image/svg+xml' if path.endswith('.svg') else 'text/css; charset=utf-8' if path.endswith('.css') else 'text/javascript; charset=utf-8')
                 if path == '/api/ai':

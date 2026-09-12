@@ -33,7 +33,7 @@ function reportFixture(id='v2-report'){
  return {id,kind:'insights',schema_version:2,status:'success',data_version:2,requested_modules:['notes'],created_at:'2026-09-12',scope,
   report:{title:'模块报告',summary:'逐项查看',modules:Object.fromEntries(keys.map(key=>[key,{key,status:'success',data_version:2,finished_at:'2026-09-11',scope:clone(scope),evidence_snapshot:clone(snapshot),report:clone(reports[key])}]))}};
 }
-function allMarkers(value){if(typeof value==='string')return value.startsWith('FIELD_')?[value]:[];if(Array.isArray(value))return value.flatMap(allMarkers);if(value&&typeof value==='object')return Object.values(value).flatMap(allMarkers);return []}
+function allMarkers(value){if(typeof value==='string')return value.startsWith('FIELD_')?[value]:[];if(Array.isArray(value))return value.flatMap(allMarkers);if(value&&typeof value==='object')return Object.entries(value).filter(([key])=>key!=='items').flatMap(([,v])=>allMarkers(v));return []}
 async function main(){
  const reopened=fixture(),ongoing=reportFixture('reopened');ongoing.status='running';ongoing.requested_modules=['audience','comments','summary'];reopened.ai_reports=[ongoing];
  assert.deepEqual(clone(harness(reopened).run('selectedInsightModules()')),['audience','comments','summary'],'reload restores the actual module selection instead of changing comments to intent');

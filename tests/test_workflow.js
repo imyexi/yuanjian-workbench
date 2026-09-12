@@ -76,7 +76,7 @@ function harness(initial = fixture()) {
     vm.runInContext(definition,context);
   }
   vm.runInContext(html.slice(html.indexOf('let searchUpdateTimer;'),html.indexOf("document.addEventListener('change',event=>")),context);
-  for (const file of ['web/collection.js','web/keyword-controls.js','web/research.js','web/watch.js','web/workflow.js']) vm.runInContext(read(file),context,{filename:file});
+  for (const file of ['web/collection.js','web/keyword-controls.js','web/research.js','web/watch.js','web/report-visuals.js','web/workflow.js']) vm.runInContext(read(file),context,{filename:file});
   const run=code=>vm.runInContext(code,context);
   const fire=(type,target,extra={})=>{for (const fn of listeners[type] || []) fn({target,...extra})};
   return {state,calls,context,run,fire,checked,fields,downloads,modal(){return lastModal},
@@ -111,10 +111,10 @@ async function main() {
   const steps=fresh.run("flowNav('posts')");
   assert.equal((steps.match(/data-action="navigate"/g)||[]).length,3);
   assert.match(steps,/class="active" data-action="navigate" data-page="research"/);
-  assert.match(steps,/采集资料/);assert.match(steps,/关键词分析/);assert.match(steps,/需求与营销/);
+  assert.match(steps,/采集资料/);assert.match(steps,/关键词分析/);assert.match(steps,/需求与选品/);
   assert.doesNotMatch(steps,/千机塔|data-page="posts"/);
-  assert.match(fresh.run('insightWorkspace()'),/<h1>需求与营销<\/h1>/);
-  assert.match(fresh.run('insightWorkspace()'),/生成需求与营销建议/);
+  assert.match(fresh.run('insightWorkspace()'),/<h1>需求与选品<\/h1>/);
+  assert.match(fresh.run('insightWorkspace()'),/生成需求与选品建议/);
   fresh.run("quick.tab='posts'");
   await fresh.run("workflowAction('keyword-data', {})");
   assert.equal(fresh.state.page,'research');
@@ -260,8 +260,8 @@ async function main() {
   const exported=finalReport.run('fullReportHtml()');
   assert.match(exported,/已整理 1 条商品评价样本/);assert.match(exported,/reviews:r3/);
   assert.match(exported,/竞品历史观察/);assert.match(exported,/父体月销量/);assert.match(exported,/子体月销量/);
-  assert.match(exported,/2026-08/);assert.match(exported,/aria-label="历史价格 · USD，供应商返回时间点"/);
-  assert.match(exported,/\.watch-chart svg\{display:block/,'exported historical price chart remains visible');
+  assert.match(exported,/2026-08/);assert.match(exported,/aria-label="历史价格 · USD，按实际日期绘制"/);
+  assert.match(exported,/\.watch-visual svg\{display:block/,'exported historical price chart remains visible');
   assert.doesNotMatch(exported,/<button\b/,'standalone selection and history report has no inactive controls');
   assert.equal(finalReport.calls.length,0,'viewing saved conclusions or exporting never sends another paid query');
 

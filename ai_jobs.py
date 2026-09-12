@@ -67,10 +67,10 @@ def system_prompt(kind):
     if kind == 'translate':
         return GUARD + '\n只把每条 evidence.text 忠实翻译为简体中文，保留品牌、数值与语气，不增添结论；原文已是中文则保持原意。每个输入 id 必须返回且只返回一次。'
     if kind == 'keywords':
-        return GUARD + prompts['_CLEAN_SYSTEM'] + '\n' + prompts['_INTENT_SYSTEM'] + '''
+        return GUARD + ai_modules.clean_method_prompt(prompts['_CLEAN_SYSTEM']) + '\n' + prompts['_INTENT_SYSTEM'] + '''
 本产品适配：售后故障、清洗、漏水、维修等使用问题也是需求证据，必须保留，不按旧提示词中的售后排除规则移除；英文词不因字母组成被标记无效。
 逐条返回全部输入关键词的 items，id 原样保留；同词跨平台是不同来源，逐条保留，不合并丢编号。
-只给结构化分类，不输出旧版 Markdown 表。统计数由程序从 items 计算。findings 和 next_steps 各最多五条，都用 evidence_ids 引用输入编号。
+items 仅返回供汇总图表使用的基础分类，不为每个词生成内容建议，也不把建议写入 reason 等分类字段；不输出旧版 Markdown 表。统计数由程序从 items 计算。findings 和 next_steps 各最多五条，都用 evidence_ids 引用输入编号。
 主题应具体且少量。无效词也必须在 items 中标 valid=false 并填写具体 reason，不从项目中删除。'''
     return GUARD + prompts['_AUDIENCE_SYSTEM'] + '\n' + prompts['_INSIGHT_SYSTEM'] + '\n' + prompts['_RUBRIC'] + '''
 合并输出当前 JSON schema：core_opportunity、audiences、topics、cautions 都必须带 evidence_ids。
@@ -451,7 +451,7 @@ def normalize_modules_report(record, project):
         module.update(key=key, label=ai_modules.MODULES[key]['label'], status=state, data_version=version,
                       scope=clean_scope(old['scope']), evidence_snapshot=copy.deepcopy(evidence),
                       usage=safe_usage(old.get('usage')),
-                      report=ai_modules.validate(key, old.get('report'), evidence) if state == 'success' else None)
+                      report=ai_modules.validate(key, old.get('report'), evidence, allow_legacy=True) if state == 'success' else None)
         if state in ('pending', 'running'):
             module.update(status='interrupted', message='此前模块未完成，可选择本块继续生成')
         result['report']['modules'][key] = module

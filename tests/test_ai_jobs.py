@@ -50,6 +50,10 @@ class AIJobsTests(unittest.TestCase):
         self.assertIn(ai.PROMPTS['prompts']['_AUDIENCE_SYSTEM'], prompt)
         self.assertIn(ai.PROMPTS['prompts']['_INSIGHT_SYSTEM'], prompt)
         self.assertIn('必须保留', ai.system_prompt('keywords'))
+        self.assertIn('不为每个词生成内容建议', ai.system_prompt('keywords'))
+        self.assertNotIn('内容建议的映射规则', ai.system_prompt('keywords'))
+        self.assertNotIn('## 表1：清洗后关键词库', ai.system_prompt('keywords'))
+        self.assertIn('5W1H分类', ai.system_prompt('keywords'))
         self.assertNotIn('小红书 + 抖音（多平台汇总）', prompt)
 
     def test_bounded_coverage_is_explicit_and_platforms_preserved(self):
