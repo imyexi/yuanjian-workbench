@@ -192,10 +192,13 @@ class AIJobsTests(unittest.TestCase):
                                  'real_demand': False, 'note': '样本缺少付费证据，其他策略也需要复核。'}}
         jobs = ai.AIJobs(store, threading.RLock(), lambda: 'b' * 16, lambda: '2026-09-12',
                          lambda *args, **kwargs: (result, {}))
+        completed = []
+        jobs.on_complete = lambda saved, report_id: completed.append((saved['id'], report_id, saved['ai_reports'][-1]['status']))
         with patch('ai_jobs.threading.Thread'):
             job = jobs.start(p, {'kind': 'insights'})
         jobs.work(jobs.jobs[job['id']])
         self.assertEqual(jobs.get(job['id'])['status'], 'success')
+        self.assertEqual(completed, [(p['id'], job['id'], 'success')])
         self.assertIn('需复核', jobs.get(job['id'])['message'])
         saved = ai.normalize_ai_report(store.p['ai_reports'][0], store.p)
         self.assertEqual(saved['report']['self_check'], result['self_check'])
@@ -216,6 +219,17 @@ class AIJobsTests(unittest.TestCase):
         jobs.work(jobs.jobs[job['id']])
         self.assertEqual(jobs.get(job['id'])['status'], 'cancelled')
         self.assertIsNone(store.p['ai_reports'][0]['report'])
+
+    def test_recommendation_busy_blocks_new_ai_before_any_work_is_saved(self):
+        p = project()
+        store = MemoryStore(p)
+        jobs = ai.AIJobs(store, threading.RLock(), lambda: 'b' * 16, lambda: '', lambda *a, **k: ({}, {}))
+        jobs.external_busy = lambda: True
+        for body in ({'kind': 'keywords'}, {'kind': 'insights', 'modules': ['summary']}):
+            with self.assertRaisesRegex(ValueError, '已有 AI 任务'):
+                jobs.start(store.load(p['id']), body)
+        self.assertEqual(store.p['revision'], 0)
+        self.assertEqual(store.p['ai_reports'], [])
 
     def test_local_codex_preserves_provider_config_but_disables_tools_and_rules(self):
         with tempfile.TemporaryDirectory() as d, patch('codex_runner.configured_model', return_value='test-model'):

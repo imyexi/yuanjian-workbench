@@ -243,6 +243,32 @@ class ModuleTests(unittest.TestCase):
         self.assertEqual(saved['report']['modules']['notes']['evidence_snapshot'][0]['metrics'], {'likes': -1, 'comment_count': None})
         self.assertFalse(saved['report']['modules']['summary']['report']['self_check']['real_demand'])
 
+    def test_recommendation_continues_only_after_saved_successful_summary(self):
+        for selected in (['audience'], ['summary']):
+            jobs, store, id_ = self.job(selected)
+            completed = []
+            jobs.on_complete = lambda p, report_id: completed.append((report_id, p['ai_reports'][-1]['status']))
+            jobs.work(jobs.jobs[id_])
+            self.assertEqual(completed, [(id_, 'success')] if selected == ['summary'] else [])
+        def failure(*args, **kwargs):
+            raise codex_runner.AIError('本次模型请求失败')
+        jobs, store, id_ = self.job(['summary'], failure)
+        jobs.on_complete = lambda *args: self.fail('Failed summaries must not trigger a product query')
+        jobs.work(jobs.jobs[id_])
+        self.assertEqual(store.p['ai_reports'][-1]['status'], 'failed')
+
+    def test_handoff_failure_keeps_the_complete_analysis_and_hides_internal_error(self):
+        jobs, store, id_ = self.job(['summary'])
+        def failure(*args):
+            raise RuntimeError('internal-sensitive-error')
+        jobs.on_complete = failure
+        jobs.work(jobs.jobs[id_])
+        saved = store.p['ai_reports'][-1]
+        self.assertEqual(saved['status'], 'success')
+        self.assertIsNotNone(saved['report']['modules']['summary']['report'])
+        self.assertNotIn('internal-sensitive-error', saved['message'])
+        self.assertIn('自动选品尚未启动', saved['message'])
+
     def test_single_failure_keeps_successes_and_only_selected_block_is_rerun(self):
         calls = []
         def runner(system, payload, schema, cancel):

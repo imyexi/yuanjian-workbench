@@ -100,9 +100,8 @@ async function main() {
   assert.match(personaTree,/"type":"persona"/,'complete personas have a dedicated visual structure');
   const productTree=view.run("JSON.stringify(insightModuleNodes('summary',latestAI('insights').report.modules.summary.report,insightModuleContext(latestAI('insights'),'summary')))");
   assert.match(productTree,/"type":"products"/,'product directions use the shared report tree');
-  const productButton=[...insight.matchAll(/<button\b[^>]*>/g)].find(match=>match[0].includes('data-action="watch-product-direction"'))?.[0];
-  assert.ok(productButton,'a product hypothesis exposes the next product-research action');
-  assert.equal(decode(productButton.match(/data-query="([^"]*)"/)?.[1]),PRODUCT_TERMS.join('\n'),'the action carries every suggested term, including Chinese and quoted text');
+  assert.doesNotMatch(insight,/data-action="watch-product-direction"/,'report recommendations remain on the report instead of sending the reader to collection');
+  for(const term of PRODUCT_TERMS)assert.ok(decode(insight).includes(term),'every proposed query remains visible as a hypothesis');
   assert.match(insight,/建议检索词（AI 构造）/,'suggested product queries are not presented as collected evidence');
 
   await view.run("workflowAction('export-ai-html',{dataset:{kind:'keywords',report:'visual-keyword-report'}})");

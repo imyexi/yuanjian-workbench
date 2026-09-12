@@ -471,6 +471,8 @@ class AIJobs:
         self.store, self.lock, self.uid, self.now = store, lock, uid, now
         self.runner = runner or codex_runner.run
         self.jobs = {}
+        self.on_complete = None
+        self.external_busy = lambda: False
 
     def status(self):
         return codex_runner.status()
@@ -527,7 +529,7 @@ class AIJobs:
         if self.runner is codex_runner.run and not codex_runner.executable():
             raise ValueError('未找到可用的 Codex 程序，请检查 codex.local.json 或 FIELDWORK_CODEX_PATH 的路径配置')
         with self.lock:
-            if any(j['record']['status'] == 'running' for j in self.jobs.values()):
+            if self.external_busy() or any(j['record']['status'] == 'running' for j in self.jobs.values()):
                 raise ValueError('本机已有 AI 任务正在运行，请等待完成或取消')
             record = {k: copy.deepcopy(prepared[k]) for k in ('kind', 'target', 'scope', 'evidence_snapshot')}
             record.update(id=self.uid(), status='running', data_version=project['data_version'],
@@ -546,7 +548,7 @@ class AIJobs:
             raise ValueError('模块洞察使用当前项目资料，请按模块选择分析')
         selected = module_keys(body.get('modules'))
         with self.lock:
-            if any(j['record']['status'] == 'running' for j in self.jobs.values()):
+            if self.external_busy() or any(j['record']['status'] == 'running' for j in self.jobs.values()):
                 raise ValueError('本机已有 AI 任务正在运行，请等待完成或取消')
             retained = {}
             base_id = body.get('base_report_id')
@@ -687,9 +689,29 @@ class AIJobs:
                 raise ValueError('任务记录缺失，未覆盖项目')
             self.store.save(project, project['revision'])
 
+    def complete(self, job):
+        record = job['record']
+        if not self.on_complete or record['kind'] != 'insights' or record['status'] not in ('success', 'partial'):
+            return
+        if record.get('schema_version') == 2 and record['report']['modules'].get('summary', {}).get('status') != 'success':
+            return
+        try:
+            with self.lock:
+                self.on_complete(self.store.load(job['project_id']), record['id'])
+        except Exception:
+            # The analysis remains valid if the optional next stage cannot start.
+            with self.lock:
+                record['message'] = '洞察已保存；自动选品尚未启动，进入报告页可继续。'
+                try:
+                    self.persist(job)
+                except Exception:
+                    pass
+
     def work(self, job):
         if job['record'].get('schema_version') == 2:
-            return self.work_modules(job)
+            self.work_modules(job)
+            self.complete(job)
+            return
         record = job['record']
         try:
             payload = {'product': job['product'], 'scope': record['scope'], 'evidence': record['evidence_snapshot']}
@@ -716,3 +738,4 @@ class AIJobs:
                 self.persist(job)
             except Exception:
                 record['message'] = 'AI 结果未能保存；项目可能正在同步，请重新打开后再试'
+        self.complete(job)
