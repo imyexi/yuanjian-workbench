@@ -36,6 +36,24 @@ class HTTPTests(unittest.TestCase):
             data = response.read()
             return response.status, json.loads(data) if 'application/json' in response.headers['Content-Type'] else data
 
+    def test_decision_workspace_roundtrip_and_conflict(self):
+        status, p = self.request('/api/projects', {'name': '决策测试', 'keyword': '词'})
+        self.assertEqual(status, 201)
+        url = '/api/projects/' + p['id'] + '/decision-workspace'
+        w = {'brief': {'goal': '找机会'}, 'selected_id': 'opp-1', 'cases': [{'id': 'opp-1', 'title': '场景机会', 'strategy': {'audience': '某类人'}}]}
+        old = p['revision']
+        status, saved = self.request(url, {'revision': old, 'workspace': w})
+        self.assertEqual(status, 200)
+        self.assertEqual(saved['data_version'], p['data_version'])
+        self.assertEqual(self.request(url, {'revision': old, 'workspace': w})[0], 409)
+        self.assertEqual(self.request('/api/projects/' + p['id'])[1]['decision_workspace'], saved['decision_workspace'])
+        status, restored = self.request('/api/restore', {'project': saved})
+        self.assertEqual(status, 201)
+        self.assertEqual(restored['decision_workspace'], saved['decision_workspace'])
+        w['selected_id'] = 'missing'
+        self.assertEqual(self.request(url, {'revision': saved['revision'], 'workspace': w})[0], 400)
+        self.assertEqual(self.request('/business.js')[0], 200)
+
     def test_http_create_import_analyze_restore_and_reopen(self):
         status, home = self.request('/')
         self.assertEqual(status, 200)
@@ -62,6 +80,36 @@ class HTTPTests(unittest.TestCase):
         status, reopened = self.request('/api/projects/' + restored['id'])
         self.assertEqual(status, 200)
         self.assertEqual(len(reopened['keywords']), 13)
+
+    def test_watch_and_candidate_are_independent_and_restored(self):
+        _, p = self.request('/api/projects', {'demo': True})
+        prefix = '/api/projects/' + p['id']
+        item = p['products'][0]
+        candidate, version = item['candidate'], p['data_version']
+        status, watched = self.request(prefix + '/toggle', {'revision': p['revision'], 'kind': 'products', 'id': item['id'], 'field': 'watched'})
+        self.assertEqual(status, 200)
+        self.assertTrue(watched['products'][0].get('watched', False))
+        self.assertEqual(watched['products'][0]['candidate'], candidate)
+        self.assertEqual(watched['data_version'], version)
+        status, stale = self.request(prefix + '/toggle', {'revision': p['revision'], 'kind': 'products', 'id': item['id'], 'field': 'watched'})
+        self.assertEqual(status, 409)
+        status, toggled = self.request(prefix + '/toggle', {'revision': watched['revision'], 'kind': 'products', 'id': item['id']})
+        self.assertEqual(status, 200)
+        self.assertTrue(toggled['products'][0]['watched'])
+        self.assertEqual(toggled['products'][0]['candidate'], not candidate)
+        self.assertEqual(toggled['data_version'], version + 1)
+        status, restored = self.request('/api/restore', {'project': toggled})
+        self.assertEqual(status, 201)
+        self.assertTrue(restored['products'][0]['watched'])
+        status, _ = self.request(prefix + '/toggle', {'revision': toggled['revision'], 'kind': 'products', 'id': item['id'], 'field': 'price'})
+        self.assertEqual(status, 400)
+        old = dict(toggled)
+        old['products'] = [dict(x) for x in toggled['products']]
+        for x in old['products']:
+            x.pop('watched', None)
+        status, legacy = self.request('/api/restore', {'project': old})
+        self.assertEqual(status, 201)
+        self.assertFalse(legacy['products'][0]['watched'])
 
     def test_http_blocks_cross_origin_and_bad_data(self):
         status, _ = self.request('/api/projects', {'demo': True}, 'https://untrusted.example')

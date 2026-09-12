@@ -38,7 +38,7 @@ async function main(){
  const reopened=fixture(),ongoing=reportFixture('reopened');ongoing.status='running';ongoing.requested_modules=['audience','comments','summary'];reopened.ai_reports=[ongoing];
  assert.deepEqual(clone(harness(reopened).run('selectedInsightModules()')),['audience','comments','summary'],'reload restores the actual module selection instead of changing comments to intent');
  const choice=harness(),page=choice.run('insightWorkspace()');
- assert.equal((page.match(/name="insight-module"/g)||[]).length,7);
+ assert.equal((page.match(/name="insight-module"/g)||[]).length,8);
  assert.match(page,/这次重点看什么/);assert.match(page,/每块独立取样/);
  assert.deepEqual(clone(choice.run('selectedInsightModules()')),['audience','intent','summary']);
  await choice.run("workflowAction('ai-insights',{})");
@@ -71,7 +71,7 @@ async function main(){
  for(const key of keys)assert.equal((exported.match(new RegExp('id="insight-v2-report-'+key+'"','g'))||[]).length,1);
  const full=view.run('fullReportHtml()').split('<h2>当前项目资料</h2>');assert.match(full[0],/SAVED_POST_BODY/);assert.doesNotMatch(full[0],/CURRENT_CHANGED_BODY/);assert.match(full[1],/CURRENT_CHANGED_BODY/);
  assert.match(view.run('reportWorkspace()'),new RegExp(reports.summary.core_opportunity.text));
- assert.match(view.run('keywordWorkspace()'),/选择深入洞察/);
+ assert.match(view.run('keywordWorkspace()'),/查看人群与场景/);
 
  view.state.project.ai_reports[0].report.modules.notes.evidence_snapshot.find(x=>x.id==='posts:p1').text='NOTES_SPECIFIC_SNAPSHOT';
  await view.run(`workflowAction('ai-evidence',{dataset:{report:'v2-report',module:'notes',evidence:'["posts:p1"]'}})`);
